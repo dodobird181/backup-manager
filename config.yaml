@@ -1,0 +1,24 @@
+##
+# This config file allows environment variables in the following format: "${VAR_NAME}".
+##
+
+backup:
+  rclone_remote: "b2crypt:"
+  prefix: "rush_backup_"
+  datetime_format: "%Y-%m-%d_%I-%M-%S_%p"
+  dirs: [
+    "${DJANGO_STATIC_ROOT}", 
+    "${DJANGO_MEDIA_ROOT}", 
+    "${DEPLOY_LOGS_DIR}",
+  ]
+  pruning:
+    keep_daily: 7
+    keep_weekly: 4
+    keep_monthly: 6
+    keep_yearly: 2
+  postgres:
+    name: "${POSTGRES_DATABASE_NAME}"
+    username: "${POSTGRES_DATABASE_USERNAME}"
+    password: "${POSTGRES_DATABASE_PASSWORD}"
+    host: "${POSTGRES_DATABASE_HOST}"
+    port: "${POSTGRES_DATABASE_PORT}"
