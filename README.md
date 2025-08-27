@@ -1,5 +1,5 @@
 # Sam's Backup Program
-This is a generic backup program written by Samuel Morris using rclone for a project using a postgres database.
+This is a generic backup program written by Samuel Morris using rclone. Currently this backup program is a little inflexible and only works on projects that are using a Postgres database. However, this seems like a useful piece of software so I intend to make it a little more flexible in the future.
 
 ## Prerequisites:
 1. Install and configure `rclone` with a remote, see [their documentation](https://rclone.org/docs/).
