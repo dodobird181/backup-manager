@@ -3,13 +3,13 @@
 ##
 
 backup:
-  rclone_remote: "b2crypt:"
-  prefix: "rush_backup_"
+  rclone_remote: "example_remote:"
+  prefix: "some_prefix_"
   datetime_format: "%Y-%m-%d_%I-%M-%S_%p"
   dirs: [
-    "${DJANGO_STATIC_ROOT}", 
-    "${DJANGO_MEDIA_ROOT}", 
-    "${DEPLOY_LOGS_DIR}",
+    "folder1/", 
+    "folder2/", 
+    "${ENV_VAR_TO_FOLDER_3}",
   ]
   pruning:
     keep_daily: 7
@@ -17,8 +17,8 @@ backup:
     keep_monthly: 6
     keep_yearly: 2
   postgres:
-    name: "${POSTGRES_DATABASE_NAME}"
-    username: "${POSTGRES_DATABASE_USERNAME}"
-    password: "${POSTGRES_DATABASE_PASSWORD}"
-    host: "${POSTGRES_DATABASE_HOST}"
-    port: "${POSTGRES_DATABASE_PORT}"
+    name: "db"
+    username: "user"
+    password: "password"
+    host: "localhost"
+    port: "5432"
