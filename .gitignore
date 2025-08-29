@@ -2,6 +2,7 @@
 __pycache__/
 *.py[codz]
 *$py.class
+config.yaml
 
 # C extensions
 *.so
