@@ -4,35 +4,11 @@ function now(){
     date '+%Y-%m-%d %H:%M:%S %Z'
 }
 
-# Send stdout and stderr to logfiles
-mkdir "backups/logs" >/dev/null 2>&1
-logfiles=( "backups/logs/$(now).txt" "backups/logs/latest.txt" )
-for filename in "${logfiles[@]}"; do
-    exec > >(tee "$filename")
-    exec 2> >(tee "$filename" >&2)
-done
-
-echo "$(now) - Running backup..."
-
-###
-# Check script preconditions...
-###
-required_tools=(
-    rclone
-    pg_dump
-    zip
-    python3
-    yq  # see backups README for info on yq
-)
-for toolname in "${required_tools[@]}"; do
-    if [ -z "$(which $toolname)" ]; then
-        echo "$(now) - Backup failed. Please install and configure $toolname..."
-        exit 1
-    fi
-done
+APP_ROOT="$(dirname "$(readlink -fm "$0")")"
+echo "$APP_ROOT"
 
 yaml_get() {
-    local yaml_file="backups/config.yaml"
+    local yaml_file="$APP_ROOT/config.yaml"
     local key_path="$1"
     local __resultvar="$2"
     local is_list="$3"   # pass "true" if it's a list
@@ -77,6 +53,11 @@ yaml_get() {
     fi
 }
 
+postgres_databases="$(yq -e '.backup.postgres[]' 'backup-manager/config.yaml')"
+for db in "${postgres_databases[@]}"; do
+    echo "$db awdawd"
+done
+
 yaml_get '.backup.rclone_remote' RCLONE_REMOTE_NAME
 yaml_get '.backup.datetime_format' DATETIME_FORMAT
 yaml_get '.backup.prefix' BACKUP_FILE_PREFIX
@@ -92,6 +73,33 @@ yaml_get '.backup.postgres.username' USERNAME
 yaml_get '.backup.postgres.password' PASSWORD
 yaml_get '.backup.postgres.host' HOST
 yaml_get '.backup.postgres.port' PORT
+
+# Send stdout and stderr to logfiles
+mkdir "backups/logs" >/dev/null 2>&1
+logfiles=( "backups/logs/$(now).txt" "backups/logs/latest.txt" )
+for filename in "${logfiles[@]}"; do
+    exec > >(tee "$filename")
+    exec 2> >(tee "$filename" >&2)
+done
+
+echo "$(now) - Running backup..."
+
+###
+# Check script preconditions...
+###
+required_tools=(
+    rclone
+    pg_dump
+    zip
+    python3
+    yq  # see backups README for info on yq
+)
+for toolname in "${required_tools[@]}"; do
+    if [ -z "$(which $toolname)" ]; then
+        echo "$(now) - Backup failed. Please install and configure $toolname..."
+        exit 1
+    fi
+done
 
 # Check postgres connection
 if ! pg_isready -h "$HOST" -p "$PORT" -U "$USERNAME" >/dev/null 2>&1; then
@@ -132,7 +140,7 @@ zip -r "$COMPRESSED_BACKUP_FILE" "$zip_preparation_dir/" >/dev/null
 rm -r "$zip_preparation_dir"
 
 echo "$(now) - Uploading backup file '$COMPRESSED_BACKUP_FILE'..."
-rclone copy $COMPRESSED_BACKUP_FILE $RCLONE_REMOTE_NAME
+#rclone copy $COMPRESSED_BACKUP_FILE $RCLONE_REMOTE_NAME
 rm "$COMPRESSED_BACKUP_FILE"
 
 # Back off saving older backup versions to save storage space.
@@ -152,11 +160,11 @@ python backups/get_backups_to_prune.py \
 to_prune=( $(cat "backups/to_prune.txt") )
 for filename in "${to_prune[@]}"; do
     echo "$(now) - Pruning $filename..."
-    rclone delete "$RCLONE_REMOTE_NAME$filename"
+    #rclone delete "$RCLONE_REMOTE_NAME$filename"
 done
 rm "backups/to_prune.txt"
 
 # Update current backup list
-rclone lsf $RCLONE_REMOTE_NAME > backups/current_backups.txt
+#rclone lsf $RCLONE_REMOTE_NAME > backups/current_backups.txt
 
 echo "$(now) - Done!"
