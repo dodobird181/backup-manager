@@ -1,0 +1,32 @@
+##
+# This config file allows environment variables in the following format: "${VAR_NAME}".
+##
+
+backup:
+  program_directory: "backups" # The directory that this backup program sits in, inside your project's root directory. 
+  rclone_remote: "example_remote:"
+  prefix: "some_prefix_"
+  datetime_format: "%Y-%m-%d_%I-%M-%S_%p"
+  dirs: [
+    "folder1/", 
+    "folder2/",
+    "${ENV_VAR_TO_FOLDER_3}",
+  ]
+  pruning:
+    keep_daily: 7
+    keep_weekly: 4
+    keep_monthly: 6
+    keep_yearly: 2
+  
+  postgres:
+    - name: "db1"
+      username: "user"
+      password: "password"
+      host: "localhost"
+      port: "5432"
+
+    - name: "db2"
+      username: "user"
+      password: "password"
+      host: "localhost"
+      port: "5432"
