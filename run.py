@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-
 import argparse
 import json
 import os
@@ -10,7 +9,9 @@ from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
 from functools import lru_cache
+from pprint import pp
 from typing import Any, Dict, List
+from uuid import uuid4
 
 help = """
 
@@ -126,8 +127,7 @@ class Config:
             )
 
         def __str__(self) -> str:
-            # also password redacted for str function
-            return self.__repr__()
+            return f"<{self.provider.name} Database - {self.host}:{self.port} - {self.name}>"
 
         def conn_args(self) -> List[str]:
             """Connection arguments for the database."""
@@ -142,6 +142,11 @@ class Config:
                 if code == 0:
                     return True
                 return False
+            raise Config.Database.UnsupportedProvider(self.provider)
+
+        def dump(self, path: str) -> None:
+            if self.provider == Config.Database.Provider.POSTGRES:
+                run("pg_dump", *self.conn_args(), ">", path)
             raise Config.Database.UnsupportedProvider(self.provider)
 
     @dataclass
@@ -208,8 +213,12 @@ def load_configuration() -> Config:
 
 if __name__ == "__main__":
 
+    args = get_arguments()
+
+    LIVE = args.live
     BASIC_CLI_TOOLS = ["rclone", "zip", "yq"]
     PG_CLI_TOOLS = ["pg_dump", "psql"]
+    ZIP_DIR = f"{uuid4().hex}_tmp_backup_manager_workspace"
 
     log("Starting backup...")
 
@@ -220,7 +229,7 @@ if __name__ == "__main__":
     # Check for basic linux dependencies and load the config file
     check_dependencies(BASIC_CLI_TOOLS)
     config = load_configuration()
-    print(config)
+    pp(config)
 
     # Check if the user needs to install any Postgres specific cli tools
     if any([db.provider == Config.Database.Provider.POSTGRES for db in config.databases]):
@@ -232,7 +241,18 @@ if __name__ == "__main__":
             log(f"Backup failed. Could not connect to database: {db}.")
             exit(1)
 
+    # Backup the databases
+    BACKUP_WORKSPACE_PATH = f"{parent_path()}/{ZIP_DIR}"
+    OFFICIAL_BACKUP_TIMESTAMP = datetime.now().astimezone().strftime(config.file_format.datetime)
+    log(f"Creating temporary workspace: '{BACKUP_WORKSPACE_PATH}'...")
+    run("mkdir", BACKUP_WORKSPACE_PATH)
+    for db in config.databases:
+        dump_path = f"{BACKUP_WORKSPACE_PATH}/{config.file_format.prefix}_{OFFICIAL_BACKUP_TIMESTAMP}_{db.name}"
+        db.dump(dump_path)
+
     # if "postgres" in config["databases"]:
     #     ...
     # for pg_database in config["backup"]["postgres"]:
     #     ...
+
+    log("Done!")
