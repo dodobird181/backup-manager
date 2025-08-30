@@ -98,8 +98,8 @@ class BucketFactory:
     def row_of_buckets(size: Bucket.Size, n: int) -> List[Bucket]:
         """The buckets are next to each other chronologically and going
         back in time from the current datetime."""
-        now = datetime.now()
-        now = datetime(year=now.year, month=now.month, day=now.day)
+        now = datetime.now().astimezone()
+        now = datetime(year=now.year, month=now.month, day=now.day).astimezone()
         return [
             Bucket(
                 size=size,
