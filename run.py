@@ -17,7 +17,7 @@ from uuid import uuid4
 
 Arguments = namedtuple(
     "ArgNamespace",
-    ["live"],
+    ["live", "log_level"],
 )
 
 
@@ -29,6 +29,12 @@ def get_arguments() -> Arguments:
         default=False,
         action="store_true",
         help="Send API calls to rclone when the live flag is true. Otherwise this program will only run locally and output logs.",
+    )
+    parser.add_argument(
+        "--log-level",
+        default="INFO",
+        type=str,
+        help="The console log level. One of: [DEBUG, INFO, WARNING, ERROR]. ",
     )
     args = parser.parse_args()
     return args  # type: ignore
@@ -95,6 +101,7 @@ class Config:
 
         class Provider(Enum):
             POSTGRES = "postgres"
+            SQLITE = "sqlite"
 
         provider: Provider
         name: str
@@ -175,15 +182,29 @@ def load_configuration() -> Config:
                 keep_yearly=data["pruning"]["keep_yearly"],
             ),
             databases=[
-                Config.Database(
-                    provider=Config.Database.Provider.POSTGRES,
-                    name=db["name"],
-                    host=db["host"],
-                    port=db["port"],
-                    username=db["username"],
-                    password=db["password"],
-                )
-                for db in (data["databases"]["postgres"] if data["databases"]["postgres"] else [])
+                *[
+                    Config.Database(
+                        provider=Config.Database.Provider.POSTGRES,
+                        name=db["name"],
+                        host=db["host"],
+                        port=db["port"],
+                        username=db["username"],
+                        password=db["password"],
+                    )
+                    for db in (data["databases"]["postgres"] if data["databases"]["postgres"] else [])
+                ],
+                *[
+                    # Database name is just the sqlite file path here, and everything else is left blank.
+                    Config.Database(
+                        provider=Config.Database.Provider.SQLITE,
+                        name=db["path"],
+                        host="",
+                        port="",
+                        username="",
+                        password="",
+                    )
+                    for db in (data["databases"]["sqlite"] if data["databases"]["sqlite"] else [])
+                ],
             ],
             logdir=data["logs"]["dir"],
         )
@@ -207,7 +228,7 @@ class BackupRunner:
         logger = logging.getLogger(__name__)
         logger.setLevel(logging.DEBUG)
         console_handler = logging.StreamHandler(sys.stdout)
-        console_handler.setLevel(logging.INFO)
+        console_handler.setLevel(get_arguments().log_level)
         run("mkdir", "-p", f"{parent_dir()}/{config.logdir}")
         file_handler = TimedRotatingFileHandler(
             f"{parent_dir()}/{config.logdir}/log.txt",
@@ -351,4 +372,7 @@ class BackupRunner:
 if __name__ == "__main__":
     config = load_configuration()
     runner = BackupRunner(config)
-    runner.run()
+    try:
+        runner.run()
+    except Exception as e:
+        runner.logger.error("Backup failed.", exc_info=e)
