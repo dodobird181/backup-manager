@@ -1,21 +1,19 @@
 #!/usr/bin/env python3
+
 import argparse
 import json
+import logging
 import os
-import re
 import subprocess
+import sys
 from collections import namedtuple
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
 from functools import lru_cache
-from pprint import pp
-from typing import Any, Dict, List
+from logging.handlers import TimedRotatingFileHandler
+from typing import List
 from uuid import uuid4
-
-help = """
-
-"""
 
 Arguments = namedtuple(
     "ArgNamespace",
@@ -25,7 +23,7 @@ Arguments = namedtuple(
 
 def get_arguments() -> Arguments:
     """Parse script arguments"""
-    parser = argparse.ArgumentParser(description=help)
+    parser = argparse.ArgumentParser()
     parser.add_argument(
         "--live",
         default=False,
@@ -69,24 +67,12 @@ def wait_for_confirm(message: str) -> bool:
         elif response.lower().strip() == "n":
             return False
         else:
-            log("Enter (y/Y) to confirm or (n/N) to cancel.")
-
-
-def log(message: str) -> None:
-    print(f"{now_str()} - {message}")
+            print("Enter (y/Y) to confirm or (n/N) to cancel.")
 
 
 def run(*args, check=True, capture_output=True, text=True, **kwargs) -> subprocess.CompletedProcess:
     """Run a command with some default arguments."""
     return subprocess.run(args, text=text, check=check, capture_output=capture_output, **kwargs)
-
-
-def check_dependencies(tools):
-    for toolname in tools:
-        result = run("which", toolname).stdout
-        if result.strip() == "":
-            log(f"Backup failed. Please install and configure: '{toolname}'.")
-            exit(1)
 
 
 @dataclass
@@ -132,12 +118,12 @@ class Config:
         def conn_args(self) -> List[str]:
             """Connection arguments for the database."""
             if self.provider == Config.Database.Provider.POSTGRES:
-                return ["-h", db.host, "-p", db.port, "-U", db.username, "-d", db.name]
-            raise Config.Database.UnsupportedProvider(db.provider)
+                return ["-h", self.host, "-p", self.port, "-U", self.username, "-d", self.name]
+            raise Config.Database.UnsupportedProvider(self.provider)
 
         def test_conn(self) -> bool:
             if self.provider == Config.Database.Provider.POSTGRES:
-                os.environ["PGPASSWORD"] = db.password  # Needed to avoid prompting for a password
+                os.environ["PGPASSWORD"] = self.password  # Needed to avoid prompting for a password
                 result = run("psql", *self.conn_args(), "-c", "\\q", check=False)
                 if result.returncode == 0:
                     return True
@@ -146,24 +132,10 @@ class Config:
 
         def dump(self, path: str) -> subprocess.CompletedProcess:
             if self.provider == Config.Database.Provider.POSTGRES:
-                os.environ["PGPASSWORD"] = db.password  # Needed to avoid prompting for a password
+                os.environ["PGPASSWORD"] = self.password  # Needed to avoid prompting for a password
                 with open(f"{path}.sql", "w") as dump_file:
                     return run("pg_dump", *self.conn_args(), stdout=dump_file, capture_output=False)
             raise Config.Database.UnsupportedProvider(self.provider)
-
-    def pretty_print(self) -> None:
-        data = {
-            "remote": config.rclone_remote,
-            "directories": config.dirs,
-            "databases": [str(d) for d in config.databases],
-            "pruning": "Keep {} daily, {} weekly, {} monthly, and {} yearly backups.".format(
-                config.pruning.keep_daily,
-                config.pruning.keep_weekly,
-                config.pruning.keep_monthly,
-                config.pruning.keep_yearly,
-            ),
-        }
-        log(f"Loaded config: {json.dumps(data, indent=2)}")
 
     @dataclass
     class FileFormat:
@@ -182,21 +154,13 @@ class Config:
     dirs: List[str]
     pruning: PruningStrategy
     databases: List[Database]
+    logdir: str
 
 
 def load_configuration() -> Config:
     result = run("yq", "-e", "-o=json", ".", config_path())
     try:
         data = json.loads(result.stdout)["backup"]
-
-        # warn if directory to backup is missing
-        for dirname in data["dirs"]:
-            if not dir_exists(dirname):
-                backup = wait_for_confirm(f"WARNING: Could not find directory '{dirname}'. Do you wish to proceed")
-                if backup == False:
-                    log("Backup cancelled.")
-                    exit(0)
-
         return Config(
             rclone_remote=data["rclone"]["remote"],
             file_format=Config.FileFormat(
@@ -219,8 +183,9 @@ def load_configuration() -> Config:
                     username=db["username"],
                     password=db["password"],
                 )
-                for db in data["databases"]["postgres"]
+                for db in (data["databases"]["postgres"] if data["databases"]["postgres"] else [])
             ],
+            logdir=data["logs"]["dir"],
         )
 
     except KeyError as e:
@@ -232,94 +197,158 @@ def refresh_current_backups_from_rclone(config: Config):
         subprocess.run(["rclone", "lsf", config.rclone_remote], stdout=f)
 
 
-if __name__ == "__main__":
+class BackupRunner:
 
-    args = get_arguments()
+    def __init__(self, config: Config):
+        self.config = config
+        self.logger = self._logger_from_config(config)
 
-    LIVE = bool(args.live)
-    BASIC_CLI_TOOLS = ["rclone", "zip", "yq"]
-    PG_CLI_TOOLS = ["pg_dump", "psql"]
-    ZIP_DIR = f"{uuid4().hex}_tmp_backup_manager_workspace"
+    def _logger_from_config(self, config: Config) -> logging.Logger:
+        logger = logging.getLogger(__name__)
+        logger.setLevel(logging.DEBUG)
+        console_handler = logging.StreamHandler(sys.stdout)
+        console_handler.setLevel(logging.INFO)
+        run("mkdir", "-p", f"{parent_dir()}/{config.logdir}")
+        file_handler = TimedRotatingFileHandler(
+            f"{parent_dir()}/{config.logdir}/log.txt",
+            when="midnight",  # rotate once per day at midnight
+            interval=30,  # ~monthly rotation
+            backupCount=12,
+            utc=True,
+        )
+        file_handler.setLevel(logging.DEBUG)
+        formatter = logging.Formatter(
+            fmt="%(asctime)s [%(levelname)s]: %(message)s",
+            datefmt="%Y-%m-%d_%I-%M-%S_%p_%Z%z",
+        )
+        console_handler.setFormatter(formatter)
+        file_handler.setFormatter(formatter)
 
-    log("Starting backup...")
+        # Add handlers
+        logger.addHandler(console_handler)
+        logger.addHandler(file_handler)
+        return logger
 
-    if os.getcwd() == parent_path():
-        log("Backup failed. Please make sure you're running the program from your project's root directory.")
-        exit(1)
+    def _check_dependencies(self, tools):
+        for toolname in tools:
+            result = run("which", toolname, check=False).stdout
+            if result.strip() == "":
+                self.logger.error(f"Backup failed. Please install and configure: '{toolname}'.")
+                exit(1)
 
-    # Check for basic linux dependencies and load the config file
-    check_dependencies(BASIC_CLI_TOOLS)
-    config = load_configuration()
-    config.pretty_print()
+    def run(self) -> None:
+        LIVE = bool(get_arguments().live)
+        BASIC_CLI_TOOLS = ["rclone", "zip", "yq"]
+        PG_CLI_TOOLS = ["pg_dump", "psql"]
+        ZIP_DIR = f"{uuid4().hex}_tmp_backup_manager_workspace"
 
-    # Check if the user needs to install any Postgres specific cli tools
-    if any([db.provider == Config.Database.Provider.POSTGRES for db in config.databases]):
-        check_dependencies(PG_CLI_TOOLS)
+        self.logger.info("Starting backup...")
 
-    # Check database connections exist
-    for db in config.databases:
-        if db.test_conn() == False:
-            log(f"Backup failed. Could not connect to database: {db}.")
+        # Log the config data in DEBUG
+        data = {
+            "remote": config.rclone_remote,
+            "directories": config.dirs,
+            "databases": [str(d) for d in config.databases],
+            "pruning": "Keep {} daily, {} weekly, {} monthly, and {} yearly backups.".format(
+                config.pruning.keep_daily,
+                config.pruning.keep_weekly,
+                config.pruning.keep_monthly,
+                config.pruning.keep_yearly,
+            ),
+        }
+        self.logger.debug(f"Loaded config: {json.dumps(data, indent=2)}")
+
+        # warn if directory to backup is missing
+        for dirname in self.config.dirs:
+            if not dir_exists(dirname):
+                backup = wait_for_confirm(f"WARNING: Could not find directory '{dirname}'. Do you wish to proceed")
+                if backup == False:
+                    self.logger.info("Backup cancelled.")
+                    exit(0)
+
+        if os.getcwd() == parent_path():
+            self.logger.info(
+                "Backup failed. Please make sure you're running the program from your project's root directory."
+            )
             exit(1)
 
-    # Backup the databases
-    BACKUP_WORKSPACE = f"{parent_path()}/{ZIP_DIR}"
-    BACKUP_TIMESTAMP = datetime.now().astimezone().strftime(config.file_format.datetime)
-    run("mkdir", BACKUP_WORKSPACE)
-    log(f"Created temporary workspace: '{BACKUP_WORKSPACE}'.")
-    for i, db in enumerate(sorted(config.databases, key=lambda db: db.name)):
-        # use index to make sure names are unique and throw in db name for identification
-        dump_path = f"{BACKUP_WORKSPACE}/{BACKUP_TIMESTAMP}_{db.name}_{i}"
-        db.dump(dump_path)
+        # Check for basic linux dependencies and load the config file
+        self._check_dependencies(BASIC_CLI_TOOLS)
 
-    log(f"Copying backup directories {config.dirs}...")
-    for dirname in config.dirs:
-        run("cp", "-r", f"{os.getcwd()}/{dirname}", f"{BACKUP_WORKSPACE}/{dirname}", capture_output=False)
+        # Check if the user needs to install any Postgres specific cli tools
+        if any([db.provider == Config.Database.Provider.POSTGRES for db in config.databases]):
+            self._check_dependencies(PG_CLI_TOOLS)
 
-    prefix = config.file_format.prefix
-    prefix = "" if prefix.strip() == "" else f"{prefix}_"
-    COMPRESSED_BACKUP_PATH = f"{parent_dir()}/{prefix}{BACKUP_TIMESTAMP}.zip"
-    log(f"Compressing files to {COMPRESSED_BACKUP_PATH}...")
-    run(
-        "zip",
-        "-r",
-        COMPRESSED_BACKUP_PATH,  # relative path so zip doesn't include nested directories
-        f"{parent_dir()}/{ZIP_DIR}",
-    )
-    run("rm", "-rf", BACKUP_WORKSPACE, capture_output=False)
+        # Check database connections exist
+        for db in config.databases:
+            if db.test_conn() == False:
+                self.logger.info(f"Backup failed. Could not connect to database: {db}.")
+                exit(1)
 
-    if LIVE:
-        log(f"Uploading backup to rclone remote: '{config.rclone_remote}'.")
-        run("rclone", "copy", COMPRESSED_BACKUP_PATH, config.rclone_remote, capture_output=False)
-    else:
-        log("Skipping upload to rclone because the '--live' flag is false.")
-    run("rm", "-rf", COMPRESSED_BACKUP_PATH)
+        # Backup the databases
+        BACKUP_WORKSPACE = f"{parent_path()}/{ZIP_DIR}"
+        BACKUP_TIMESTAMP = datetime.now().astimezone().strftime(config.file_format.datetime)
+        run("mkdir", BACKUP_WORKSPACE)
+        self.logger.info(f"Created temporary workspace: '{BACKUP_WORKSPACE}'.")
+        for i, db in enumerate(sorted(config.databases, key=lambda db: db.name)):
+            # use index to make sure names are unique and throw in db name for identification
+            dump_path = f"{BACKUP_WORKSPACE}/{BACKUP_TIMESTAMP}_{db.name}_{i}"
+            db.dump(dump_path)
 
-    PRUNE_FILE = f"{parent_path()}/to_prune.txt"
-    if LIVE:
-        log("Pruning old backup files...")
-        refresh_current_backups_from_rclone(config)
+        self.logger.info(f"Copying backup directories {config.dirs}...")
+        for dirname in config.dirs:
+            run("cp", "-r", f"{os.getcwd()}/{dirname}", f"{BACKUP_WORKSPACE}/{dirname}", capture_output=False)
+
+        prefix = config.file_format.prefix
+        prefix = "" if prefix.strip() == "" else f"{prefix}_"
+        COMPRESSED_BACKUP_PATH = f"{parent_dir()}/{prefix}{BACKUP_TIMESTAMP}.zip"
+        self.logger.info(f"Compressing files to {COMPRESSED_BACKUP_PATH}...")
         run(
-            "python",
-            f"{parent_path()}/get_backups_to_prune.py",
-            f"--input-file={parent_path()}/current_backups.txt",
-            f"--output-file={PRUNE_FILE}",
-            f"--file-format={prefix}{config.file_format.datetime}.zip",
-            f"--keep-daily={config.pruning.keep_daily}",
-            f"--keep-weekly={config.pruning.keep_weekly}",
-            f"--keep-monthly={config.pruning.keep_monthly}",
-            f"--keep-yearly={config.pruning.keep_yearly}",
+            "zip",
+            "-r",
+            COMPRESSED_BACKUP_PATH,  # relative path so zip doesn't include nested directories
+            f"{parent_dir()}/{ZIP_DIR}",
         )
-        with open(PRUNE_FILE, "r") as prune_file:
-            for backup_filename in prune_file.readlines():
-                backup_filename = backup_filename.replace("\n", "")
-                log(f"Pruning {backup_filename}...")
-                run("rclone", "delete", f"{config.rclone_remote}/{backup_filename}", capture_output=False)
-    else:
-        log("Skipping pruning because the '--live' flag is false.")
-    run("rm", "-rf", PRUNE_FILE)
+        run("rm", "-rf", BACKUP_WORKSPACE, capture_output=False)
 
-    # refresh again to update the backups list after backup is complete
-    refresh_current_backups_from_rclone(config)
+        if LIVE:
+            self.logger.info(f"Uploading backup to rclone remote: '{config.rclone_remote}'.")
+            run("rclone", "copy", COMPRESSED_BACKUP_PATH, config.rclone_remote, capture_output=False)
+        else:
+            self.logger.info("Skipping upload to rclone because the '--live' flag is false.")
+        run("rm", "-rf", COMPRESSED_BACKUP_PATH)
 
-    log("Done!")
+        PRUNE_FILE = f"{parent_path()}/to_prune.txt"
+        if LIVE:
+            self.logger.info("Pruning old backup files...")
+            refresh_current_backups_from_rclone(config)
+            run(
+                "python",
+                f"{parent_path()}/get_backups_to_prune.py",
+                f"--input-file={parent_path()}/current_backups.txt",
+                f"--output-file={PRUNE_FILE}",
+                f"--file-format={prefix}{config.file_format.datetime}.zip",
+                f"--keep-daily={config.pruning.keep_daily}",
+                f"--keep-weekly={config.pruning.keep_weekly}",
+                f"--keep-monthly={config.pruning.keep_monthly}",
+                f"--keep-yearly={config.pruning.keep_yearly}",
+            )
+            with open(PRUNE_FILE, "r") as prune_file:
+                for backup_filename in prune_file.readlines():
+                    backup_filename = backup_filename.replace("\n", "")
+                    self.logger.info(f"Pruning {backup_filename}...")
+                    run("rclone", "delete", f"{config.rclone_remote}/{backup_filename}", capture_output=False)
+        else:
+            self.logger.info("Skipping pruning because the '--live' flag is false.")
+        run("rm", "-rf", PRUNE_FILE)
+
+        # refresh again to update the backups list after backup is complete
+        refresh_current_backups_from_rclone(config)
+
+        self.logger.info("Done!")
+
+
+if __name__ == "__main__":
+    config = load_configuration()
+    runner = BackupRunner(config)
+    runner.run()
