@@ -282,6 +282,12 @@ class BackupRunner:
         PG_CLI_TOOLS = ["pg_dump", "psql"]
         ZIP_DIR = f"{uuid4().hex}_tmp_backup_manager_workspace"
 
+        if os.getcwd() == parent_path():
+            self.logger.info(
+                "Backup failed. Please make sure you're running the program from your project's root directory."
+            )
+            exit(1)
+
         self.logger.info("Starting backup...")
 
         # Log the config data in DEBUG
@@ -305,13 +311,6 @@ class BackupRunner:
                 if backup == False:
                     self.logger.info("Backup cancelled.")
                     exit(0)
-
-        self.logger.debug(f"Comparing cwd: {os.getcwd()}, parent_path: {parent_path()}")
-        if os.getcwd() == parent_path():
-            self.logger.info(
-                "Backup failed. Please make sure you're running the program from your project's root directory."
-            )
-            exit(1)
 
         # Check for basic linux dependencies and load the config file
         self._check_dependencies(BASIC_CLI_TOOLS)
