@@ -384,7 +384,7 @@ class BackupRunner:
                         run("rclone", "delete", f"{config.rclone_remote}/{backup_filename}", capture_output=False)
             else:
                 self.logger.info("Skipping pruning because the '--live' flag is false.")
-            # run("rm", "-rf", PRUNE_FILE)
+            run("rm", "-rf", PRUNE_FILE)
 
         # refresh again to update the backups list after backup is complete
         if LIVE:
