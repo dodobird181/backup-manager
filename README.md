@@ -30,10 +30,3 @@ Currently, only [PostgreSQL](https://www.postgresql.org/) and [SQLite](https://s
 **WARNING**: This program expects the folder you save backups to on your cloud storage provider to ONLY contain the specifically-formatted backup files created by it. There are some consequences of this decision. For example, you should not configure more than one backup-manager to point to the same remote if they have different prefixes or timestamp formats. And you should also not change the prefix or timestamp format once you have started saving backups. If you really want/need to change the prefix or timestamp format you should make sure this program is not currently running, temporarily unschedule this program, rename all the current backup files according to the new prefix and timestamp format, change the prefix and timestamp format in your `config.yaml` file, and, finally, reschedule this program.
 
 **TIP**: If you're backing up a Postgres database make sure your `pg_dump` version matches your Postgres database. Postgres is picky about version mismatches.
-
-## Usage:
-
-*TIP*: Here is an example crontab that will perform a backup every day at 4:00 AM, assuming your project exists in a directory called `/user/project` and you have some optional environment variables in `/user/project/.env` that you want exported so they can be read by `config.yaml`: 
-```
-0 4 * * * cd /user/project && set -a && . /user/project/.env && set +a & /bin/bash /user/project/backups/run.py
-```
