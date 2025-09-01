@@ -1,36 +1,39 @@
-# Sam's Backup Program
-This is a generic backup program written by Samuel Morris using rclone. Currently this backup program is a little inflexible and only works on projects that are using a Postgres database. However, this seems like a useful piece of software so I intend to make it a little more flexible in the future.
+# Dodo Backup Manager
 
-## Prerequisites:
-1. Install and configure `rclone` with a remote, see [their documentation](https://rclone.org/docs/).
-2. Have a Postgres database to backup, and optionally some other local directories.
-3. Install the linux pre-requisites using your package manager of choice: 
-a.)`pg_dump`, `python3`, `yq`, and `zip`.
-b.) NOTE: Make sure your pg_dump version matches your Postgres database. Postgres is picky about version mismatches.
-c.) NOTE: There are multiple versions of `yq`. The one you want is here: https://github.com/mikefarah/yq.
+A simple program for backing up files and databases written by Samuel Morris using Python and [Rclone](https://rclone.org/).
 
-## Configuration:
-The `config.yaml` file is used to control the backup behavior of this program. It supports environment variable substitution using the `${VAR_NAME}` format, so sensitive values or environment-specific paths can be injected dynamically.
+The motivation behind this project was to create an easy way to configure *what* to back up, *where* the data should be sent, and *how long* it should persist there. All you need to do to create a new backup "system" is [configure an rclone remote](https://rclone.org/docs/#configure), specify the directories and databases to back up in `config.yaml`, and schedule a cron job that periodically runs this program.
 
-There are some general configuration options that control the basic backup behaviour. `rclone_remote` controls which remote to save the backup files to. `prefix` is a prefix for your backup file names. `datetime_format` specifies the datetime format used in your backup file names. And, `dirs` controls which directories you wish to back up.
+Currently, only [PostgreSQL](https://www.postgresql.org/) and [SQLite](https://sqlite.org/) databses are supported.
 
-In addition to the general configuration options, there are two subsections: `pruning` and `postgres`.
-1. `pruning` controls how many backups are retained over time:
-    - keep_daily: Number of daily backups to keep.
-    - keep_weekly: Number of weekly backups to keep.
-    - keep_monthly: Number of monthly backups to keep.
-    - keep_yearly: Number of yearly backups to keep.
+## Installation:
+1. Clone this repository to a new folder on your machine. You can name the folder whatever you want, but I usually choose something like "backups" or "backup_manager".
+2. Run `apt install python3 python-is-python3 zip && python --version` to install Python3 and zip.
+3. Install [yq](https://github.com/mikefarah/yq?tab=readme-ov-file#install) by following their README.
+4. Copy `config.yaml.template` and rename the copy to `config.yaml`.
+4. Run `./[your_folder_name]/run.py` to do a dry-run of a backup. You should see an output similar to:
+```
+2025-08-31_02-53-08_PM_EDT-0400 [INFO]: Starting backup...
+2025-08-31_02-53-08_PM_EDT-0400 [INFO]: Created temporary workspace: '/home/dodo/Documents/github/backup-manager/45b9ae92547d46c8a9e558ff874d9747_tmp_backup_manager_workspace'.
+2025-08-31_02-53-08_PM_EDT-0400 [INFO]: Copying backup directories []...
+2025-08-31_02-53-08_PM_EDT-0400 [INFO]: Compressing files to backup-manager/some_prefix__2025-08-31_02-53-08_PM.zip...
+2025-08-31_02-53-08_PM_EDT-0400 [INFO]: Skipping upload to rclone because the '--live' flag is false.
+2025-08-31_02-53-08_PM_EDT-0400 [INFO]: Skipping pruning because the '--live' flag is false.
+2025-08-31_02-53-09_PM_EDT-0400 [INFO]: Skipping refresh because the '--live' flag is false.
+2025-08-31_02-53-09_PM_EDT-0400 [INFO]: Done!
+```
+5. Now that the dry-run has succeeded. Install and configure `rclone` with a remote, see [their documentation](https://rclone.org/docs/#configure), so that you have somewhere to back-up files to. If you haven't yet chosen a cloud storage provider, I would recommend [Backblaze](https://www.backblaze.com/). Rclone is a crazy powerful tool so I would highly recommend checking out what you can do with their remotes.
+6. Set the `rclone.remote` in `config.yaml` to the remote name you just configured. NOTE: if you are not specifying a bucket or more specific location on the remote, it should have a ":" suffix at the end, e.g., "remote_name:".
+7. Run `./[your_folder_name]/run.py --live` to communicate with the Rclone remote.
+8. That's it! The `config.yaml.template` file has examples and comments that explain how to configure the backup manager properly.
 
-2. And `postgres` controls which database to include in the backup. You must specify the database `name`, `username`, `password`, `host`, and `port`.
+**WARNING**: This program expects the folder you save backups to on your cloud storage provider to ONLY contain the specifically-formatted backup files created by it. There are some consequences of this decision. For example, you should not configure more than one backup-manager to point to the same remote if they have different prefixes or timestamp formats. And you should also not change the prefix or timestamp format once you have started saving backups. If you really want/need to change the prefix or timestamp format you should make sure this program is not currently running, temporarily unschedule this program, rename all the current backup files according to the new prefix and timestamp format, change the prefix and timestamp format in your `config.yaml` file, and, finally, reschedule this program.
+
+**TIP**: If you're backing up a Postgres database make sure your `pg_dump` version matches your Postgres database. Postgres is picky about version mismatches.
 
 ## Usage:
 
-1. Create a `backups/` directory inside your root project directory.
-2. Clone this repository into `backups/`.
-3. Configure backups using `config.yaml`.
-4. And finally, run the bash program from inside the top-level directory of your project using `./backups/run.sh`. You should see a "Done!" message at the end if everything went according to plan.
-
 *TIP*: Here is an example crontab that will perform a backup every day at 4:00 AM, assuming your project exists in a directory called `/user/project` and you have some optional environment variables in `/user/project/.env` that you want exported so they can be read by `config.yaml`: 
 ```
-0 4 * * * cd /user/project && set -a && . /user/project/.env && set +a & /bin/bash /user/project/backups/run.sh
+0 4 * * * cd /user/project && set -a && . /user/project/.env && set +a & /bin/bash /user/project/backups/run.py
 ```
