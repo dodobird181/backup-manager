@@ -333,7 +333,7 @@ class BackupRunner:
         for i, db in enumerate(sorted(config.databases, key=lambda db: db.name)):
             # use index to make sure names are unique and throw in db name for identification
             self.logger.info(f"Dumping database {db}...")
-            dump_path = f"{BACKUP_WORKSPACE}/{BACKUP_TIMESTAMP}_{db.name.replace("/", "_").replace(".", "_")}_{i}"
+            dump_path = f"{BACKUP_WORKSPACE}/{BACKUP_TIMESTAMP}_{db.name.replace('/', '_').replace('.', '_')}_{i}"
             db.dump(dump_path)
 
         self.logger.info(f"Copying backup directories {config.dirs}...")
