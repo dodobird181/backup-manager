@@ -340,12 +340,21 @@ class BackupRunner:
         prefix = "" if prefix.strip() == "" else f"{prefix}_"
         COMPRESSED_BACKUP_PATH = f"{parent_dir()}/{prefix}{BACKUP_TIMESTAMP}.zip"
         self.logger.info(f"Compressing files to {COMPRESSED_BACKUP_PATH}...")
-        run(
-            "zip",
-            "-r",
-            COMPRESSED_BACKUP_PATH,  # relative path so zip doesn't include nested directories
-            f"{parent_dir()}/{ZIP_DIR}",
+        # zip -r - folder/ | pv -s $(du -sb folder/ | awk '{print $1}')
+        du_result = run("du", "-sb", f"{parent_dir()}/{ZIP_DIR}").stdout
+        num_bytes = int(du_result.split()[0])
+        zip_proc = subprocess.Popen(
+            # "-" = write zip to stdout
+            ["zip", "-rq", "-", f"{parent_dir()}/{ZIP_DIR}"],
+            stdout=subprocess.PIPE,
         )
+        with open(COMPRESSED_BACKUP_PATH, "wb") as out_file:
+            # piped output to progress viewer to see progress bar
+            pv_proc = subprocess.Popen(["pv", "-s", str(num_bytes)], stdin=zip_proc.stdout, stdout=out_file)
+            if zip_proc.stdout:
+                # let zip_proc get SIGPIPE if pv exits
+                zip_proc.stdout.close()
+            pv_proc.communicate()
         run("rm", "-rf", BACKUP_WORKSPACE, capture_output=False)
 
         if LIVE:
