@@ -17,7 +17,7 @@ from uuid import uuid4
 
 Arguments = namedtuple(
     "ArgNamespace",
-    ["live", "log_level"],
+    ["live", "log_level", "disable_pruning"],
 )
 
 
@@ -29,6 +29,12 @@ def get_arguments() -> Arguments:
         default=False,
         action="store_true",
         help="Send API calls to rclone when the live flag is true. Otherwise this program will only run locally and output logs.",
+    )
+    parser.add_argument(
+        "--disable-pruning",
+        default=False,
+        action="store_true",
+        help="Do not prune old backups.",
     )
     parser.add_argument(
         "--log-level",
@@ -120,18 +126,29 @@ class Config:
             )
 
         def __str__(self) -> str:
-            return f"<{self.provider.name} Database - {self.name}@{self.host}:{self.port}>"
+            if self.provider == Config.Database.Provider.POSTGRES:
+                return f"<{self.provider.name} Database - {self.name}@{self.host}:{self.port}>"
+            elif self.provider == Config.Database.Provider.SQLITE:
+                return f"<{self.provider.name} Database - '{self.name}'>"
+            raise Config.Database.UnsupportedProvider(self.provider)
 
         def conn_args(self) -> List[str]:
             """Connection arguments for the database."""
             if self.provider == Config.Database.Provider.POSTGRES:
                 return ["-h", self.host, "-p", self.port, "-U", self.username, "-d", self.name]
+            elif self.provider == Config.Database.Provider.SQLITE:
+                return ["ls", "-lh", self.name]
             raise Config.Database.UnsupportedProvider(self.provider)
 
         def test_conn(self) -> bool:
             if self.provider == Config.Database.Provider.POSTGRES:
                 os.environ["PGPASSWORD"] = self.password  # Needed to avoid prompting for a password
                 result = run("psql", *self.conn_args(), "-c", "\\q", check=False)
+                if result.returncode == 0:
+                    return True
+                return False
+            elif self.provider == Config.Database.Provider.SQLITE:
+                result = run(*self.conn_args(), check=False)
                 if result.returncode == 0:
                     return True
                 return False
@@ -142,6 +159,8 @@ class Config:
                 os.environ["PGPASSWORD"] = self.password  # Needed to avoid prompting for a password
                 with open(f"{path}.sql", "w") as dump_file:
                     return run("pg_dump", *self.conn_args(), stdout=dump_file, capture_output=False)
+            elif self.provider == Config.Database.Provider.SQLITE:
+                return run("cp", self.name, f"{path}.db")
             raise Config.Database.UnsupportedProvider(self.provider)
 
     @dataclass
@@ -313,7 +332,8 @@ class BackupRunner:
         self.logger.info(f"Created temporary workspace: '{BACKUP_WORKSPACE}'.")
         for i, db in enumerate(sorted(config.databases, key=lambda db: db.name)):
             # use index to make sure names are unique and throw in db name for identification
-            dump_path = f"{BACKUP_WORKSPACE}/{BACKUP_TIMESTAMP}_{db.name}_{i}"
+            self.logger.info(f"Dumping database {db}...")
+            dump_path = f"{BACKUP_WORKSPACE}/{BACKUP_TIMESTAMP}_{db.name.replace("/", "_").replace(".", "_")}_{i}"
             db.dump(dump_path)
 
         self.logger.info(f"Copying backup directories {config.dirs}...")
@@ -339,32 +359,38 @@ class BackupRunner:
             self.logger.info("Skipping upload to rclone because the '--live' flag is false.")
         run("rm", "-rf", COMPRESSED_BACKUP_PATH)
 
-        PRUNE_FILE = f"{parent_path()}/to_prune.txt"
-        if LIVE:
-            self.logger.info("Pruning old backup files...")
-            refresh_current_backups_from_rclone(config)
-            run(
-                "python",
-                f"{parent_path()}/get_backups_to_prune.py",
-                f"--input-file={parent_path()}/current_backups.txt",
-                f"--output-file={PRUNE_FILE}",
-                f"--file-format={prefix}{config.file_format.datetime}.zip",
-                f"--keep-daily={config.pruning.keep_daily}",
-                f"--keep-weekly={config.pruning.keep_weekly}",
-                f"--keep-monthly={config.pruning.keep_monthly}",
-                f"--keep-yearly={config.pruning.keep_yearly}",
-            )
-            with open(PRUNE_FILE, "r") as prune_file:
-                for backup_filename in prune_file.readlines():
-                    backup_filename = backup_filename.replace("\n", "")
-                    self.logger.info(f"Pruning {backup_filename}...")
-                    run("rclone", "delete", f"{config.rclone_remote}/{backup_filename}", capture_output=False)
+        if get_arguments().disable_pruning == True:
+            self.logger.info("Skipping pruning because '--disable-pruning' was passed as an argument.")
         else:
-            self.logger.info("Skipping pruning because the '--live' flag is false.")
-        run("rm", "-rf", PRUNE_FILE)
+            PRUNE_FILE = f"{parent_path()}/to_prune.txt"
+            if LIVE:
+                self.logger.info("Pruning old backup files...")
+                refresh_current_backups_from_rclone(config)
+                run(
+                    "python",
+                    f"{parent_path()}/get_backups_to_prune.py",
+                    f"--input-file={parent_path()}/current_backups.txt",
+                    f"--output-file={PRUNE_FILE}",
+                    f"--file-format={prefix}{config.file_format.datetime}.zip",
+                    f"--keep-daily={config.pruning.keep_daily}",
+                    f"--keep-weekly={config.pruning.keep_weekly}",
+                    f"--keep-monthly={config.pruning.keep_monthly}",
+                    f"--keep-yearly={config.pruning.keep_yearly}",
+                )
+                with open(PRUNE_FILE, "r") as prune_file:
+                    for backup_filename in prune_file.readlines():
+                        backup_filename = backup_filename.replace("\n", "")
+                        self.logger.info(f"Pruning {backup_filename}...")
+                        run("rclone", "delete", f"{config.rclone_remote}/{backup_filename}", capture_output=False)
+            else:
+                self.logger.info("Skipping pruning because the '--live' flag is false.")
+            # run("rm", "-rf", PRUNE_FILE)
 
         # refresh again to update the backups list after backup is complete
-        refresh_current_backups_from_rclone(config)
+        if LIVE:
+            refresh_current_backups_from_rclone(config)
+        else:
+            self.logger.info("Skipping refresh because the '--live' flag is false.")
 
         self.logger.info("Done!")
 
