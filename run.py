@@ -480,7 +480,6 @@ class BackupRunner:
                 zip_proc.stdout.close()
             pv_proc.communicate()
         run("rm", "-rf", BACKUP_WORKSPACE, capture_output=False)
-
         if LIVE:
             self.logger.info(f"Uploading backup to rclone remote: '{config.rclone_remote}'.")
             run("rclone", "copy", COMPRESSED_BACKUP_PATH, config.rclone_remote, capture_output=False)
@@ -495,18 +494,6 @@ class BackupRunner:
             if LIVE:
                 self.logger.info("Pruning old backup files...")
                 refresh_current_backups_from_rclone(config)
-                # run(
-                #     "python",
-                #     f"{parent_path()}/get_backups_to_prune.py",
-                #     f"--input-file={parent_path()}/current_backups.txt",
-                #     f"--output-file={PRUNE_FILE}",
-                #     f"--file-format={prefix}{config.file_format.datetime}.zip",
-                #     f"--keep-daily={config.pruning.keep_daily}",
-                #     f"--keep-weekly={config.pruning.keep_weekly}",
-                #     f"--keep-monthly={config.pruning.keep_monthly}",
-                #     f"--keep-yearly={config.pruning.keep_yearly}",
-                #     capture_output=False,
-                # )
 
                 # Find backups to prune
                 with open(f"{parent_path()}/current_backups.txt", "r") as f:
