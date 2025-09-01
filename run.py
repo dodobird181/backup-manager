@@ -306,6 +306,7 @@ class BackupRunner:
                     self.logger.info("Backup cancelled.")
                     exit(0)
 
+        self.logger.debug(f"Comparing cwd: {os.getcwd()}, parent_path: {parent_path()}")
         if os.getcwd() == parent_path():
             self.logger.info(
                 "Backup failed. Please make sure you're running the program from your project's root directory."
