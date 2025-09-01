@@ -4,31 +4,39 @@
 
 backup:
   rclone:
+    # The rclone remote to back up files to.
     remote: "example_remote:"
   format:
-    prefix: "some_prefix_"
-    datetime: "%Y-%m-%d_%I-%M-%S_%p"
+    prefix: ""  # You can add a optional backup-file prefix here.
+    datetime: "%Y-%m-%d_%I-%M-%S_%p"  # This will be used to format the timestamps on backup files.
   dirs: [
-    "folder1/", 
-    "folder2/",
-    "${ENV_VAR_TO_FOLDER_3}",
+    # "folder1/", 
+    # "folder2/",
+    # "${ENV_VAR_TO_FOLDER_3}",
   ]
   databases:
     postgres:
-      - name: "db1"
-        username: "user"
-        password: "password"
-        host: "localhost"
-        port: "5432"
-      - name: "db2"
-        username: "user"
-        password: "password"
-        host: "localhost"
-        port: "5432"
+      # - name: "db1"
+      #   username: "user"
+      #   password: "password"
+      #   host: "localhost"
+      #   port: "5432"
+      # - name: "db2"
+      #   username: "user"
+      #   password: "${ENV_VAR_TO_SUPER_SECRET_POSTGRES_PASSWORD}"
+      #   host: "localhost"
+      #   port: "5432"
+    sqlite:
+      # - path: "backup-manager/test.db"
+      # - path: "backup-manager/test_database_file_2.db"
   pruning:
-    keep_daily: 7
-    keep_weekly: 4
-    keep_monthly: 6
-    keep_yearly: 2
+    # Pruning rules. To disable run the program with '--disable-pruning'.
+    # Pruning works by defining date ranges based on the number of daily, weekly,
+    # monthly, and yearly backups that we want to keep, and checking if a backup
+    # can fit into one of those date ranges, starting from the oldest backups first.
+    keep_daily: 7  # Keep 7 days back worth of daily backups.
+    keep_weekly: 4 # Keep 4 weeks back worth of weekly backups.
+    keep_monthly: 6 # Keep 6 monthsback worth of monthly backups.
+    keep_yearly: 2 # Keep 2 years back worth of yearly backups.
   logs:
     dir: "logs"
