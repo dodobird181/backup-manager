@@ -282,12 +282,6 @@ class BackupRunner:
         PG_CLI_TOOLS = ["pg_dump", "psql"]
         ZIP_DIR = f"{uuid4().hex}_tmp_backup_manager_workspace"
 
-        if os.getcwd() == parent_path():
-            self.logger.info(
-                "Backup failed. Please make sure you're running the program from your project's root directory."
-            )
-            exit(1)
-
         self.logger.info("Starting backup...")
 
         # Log the config data in DEBUG
@@ -396,6 +390,12 @@ class BackupRunner:
 
 
 if __name__ == "__main__":
+
+    if os.getcwd() == parent_path():
+        raise Config.InvalidConfig(
+            "Backup failed. Please make sure you're running the program from your project's root directory."
+        )
+
     config = load_configuration()
     runner = BackupRunner(config)
     try:
