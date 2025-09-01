@@ -3,6 +3,13 @@
 ##
 
 backup:
+  service_mode:
+    # Service mode keeps the backup manager sleeping and wakes it up whenever it is scheduled to perform a backup.
+    enabled: true
+    frequency: "WEEKLY" # One of ["HOURLY", "DAILY", "WEEKLY"].
+    num_hours: 1 # The number of hours since the last backup to wait before running the next backup. Ignored if frequency is DAILY or WEEKLY.
+    time_of_day: "08:30" # The time of day to run a backup, formatted as "HH:MM". Ignored if frequency is HOURLY.
+    day_of_week: "WEDNESDAY" # The day of the week to run a backup. One of ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]. Ignored if frequency is HOURLY or DAILY.
   rclone:
     # The rclone remote to back up files to.
     remote: "example_remote:"

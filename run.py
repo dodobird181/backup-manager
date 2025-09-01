@@ -1,19 +1,24 @@
 #!/usr/bin/env python3
 
+from __future__ import annotations
+
 import argparse
 import json
 import logging
 import os
 import subprocess
 import sys
+import time
 from collections import namedtuple
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from enum import Enum
 from functools import lru_cache
 from logging.handlers import TimedRotatingFileHandler
 from typing import List
 from uuid import uuid4
+
+from get_backups_to_prune import should_prune
 
 Arguments = namedtuple(
     "ArgNamespace",
@@ -69,6 +74,18 @@ def dir_exists(dirname: str) -> bool:
 
 def now_str() -> str:
     return datetime.now().astimezone().strftime("%Y-%m-%d %I:%M:%S %p %Z%z")
+
+
+def format_seconds(seconds: int) -> str:
+    td = timedelta(seconds=seconds)
+    days = td.days
+    hours, remainder = divmod(td.seconds, 3600)
+    minutes, _ = divmod(remainder, 60)
+    if days != 0:
+        return f"{days}d {hours}h {minutes}m"
+    if hours != 0:
+        return f"{hours}h {minutes}m"
+    return f"{minutes}m"
 
 
 def wait_for_confirm(message: str) -> bool:
@@ -175,12 +192,111 @@ class Config:
         keep_monthly: int
         keep_yearly: int
 
+    @dataclass
+    class ServiceMode:
+
+        class Frequency(Enum):
+            HOURLY = "hourly"
+            DAILY = "daily"
+            WEEKLY = "weekly"
+
+        class Day(Enum):
+            MONDAY = "monday"
+            TUESDAY = "tuesday"
+            WEDNESDAY = "wednesday"
+            THURSDAY = "thursday"
+            FRIDAY = "friday"
+            SATURDAY = "saturday"
+            SUNDAY = "sunday"
+
+        enabled: bool
+        frequency: Frequency
+        num_hours: int
+        _time_of_day: str
+        day_of_week: Day
+
+        def test_for_config(self) -> Config.ServiceMode:
+            """Raise invalid config if we cannot parse for the next run time in seconds."""
+            try:
+                self.next_run_in(datetime.now().astimezone())
+                return self
+            except Exception as e:
+                raise Config.InvalidConfig("Error parsing service mode.") from e
+
+        def time_of_day_dt(self) -> datetime:
+            system_tz = datetime.now().astimezone().tzinfo
+            return datetime.strptime(self._time_of_day, "%H:%M").replace(tzinfo=system_tz)
+
+        def time_of_day_str(self) -> str:
+            return self.time_of_day_dt().strftime("%H:%M %Z%z")
+
+        def _next_weekday_in(self) -> int:
+            """How many days until the next sceduled weekday. If we are scheduled for today then return 7."""
+            now = datetime.now().astimezone()
+            dt = now
+            for i in range(1, 7):
+                dt += timedelta(days=1)
+                weekday = self.Day(dt.strftime("%A").lower())
+                if weekday == self.day_of_week:
+                    return i
+            raise Exception("This shouldn't happen!")
+
+        def next_run_in(self, last_ran_at: datetime) -> float:
+            """How many seconds from now the next scheduled backup will run."""
+            now = datetime.now().astimezone()
+            match self.frequency:
+                case self.Frequency.HOURLY:
+                    return (last_ran_at + timedelta(hours=int(self.num_hours))).timestamp() - now.timestamp()
+                case self.Frequency.DAILY:
+                    today_run_time = self.time_of_day_dt().replace(year=now.year, month=now.month, day=now.day)
+                    tomorrow_run_time = self.time_of_day_dt().replace(
+                        year=now.year, month=now.month, day=now.day
+                    ) + timedelta(days=1)
+                    if last_ran_at.date() < now.date():
+                        # if we last ran on a day before today, return the difference between now and the time of day we're scheduled to run.
+                        return today_run_time.timestamp() - now.timestamp()
+                    else:
+                        # We have already ran today, so return the difference between then now and the time of day we're scheduled to run tomorrow.
+                        return tomorrow_run_time.timestamp() - now.timestamp()
+                case self.Frequency.WEEKLY:
+                    current_weekday = self.Day(now.strftime("%A").lower())
+                    if last_ran_at + timedelta(days=7) < now and current_weekday == self.day_of_week:
+                        # It's been at least 7 days since the last run, and we are on the correct day of the week, so we *should* be running today.
+                        # Therefore, return the today run time diff.
+                        today_run_time = self.time_of_day_dt().replace(year=now.year, month=now.month, day=now.day)
+                        return today_run_time.timestamp() - now.timestamp()
+                    else:
+
+                        # It's been LESS than 7 days since the last run. Therefore, we should return the diff from 7 days after the last run date at the daily run time.
+                        run_time = self.time_of_day_dt()
+                        future_run_date = last_ran_at + timedelta(days=self._next_weekday_in())
+                        future_run_dt = future_run_date.replace(
+                            hour=run_time.hour,
+                            minute=run_time.minute,
+                        )
+                        return future_run_dt.timestamp() - now.timestamp()
+
+                case _:
+                    raise Config.InvalidConfig(f"Unsupported service mode frequency: {self.frequency}.")
+
+        def __str__(self) -> str:
+            if self.enabled == False:
+                return "Service mode disabled. Running one time only before shutting down."
+            elif self.frequency == self.Frequency.HOURLY:
+                return f"Service mode enabled. Backing up every {self.num_hours} hour(s)."
+            elif self.frequency == self.Frequency.DAILY:
+                return f"Service mode enabled. Backing up every day at {self.time_of_day_str()}."
+            elif self.frequency == self.Frequency.WEEKLY:
+                return f"Service mode enabled. Backing up every week on {self.day_of_week.name} at {self.time_of_day_str()}."
+            raise Config.InvalidConfig(f"Unsupported service mode frequency: {self.frequency}.")
+
     rclone_remote: str
     file_format: FileFormat
     dirs: List[str]
     pruning: PruningStrategy
     databases: List[Database]
     logdir: str
+    service_mode: ServiceMode
 
 
 def load_configuration() -> Config:
@@ -226,9 +342,18 @@ def load_configuration() -> Config:
                 ],
             ],
             logdir=data["logs"]["dir"],
+            service_mode=Config.ServiceMode(
+                enabled=data["service_mode"]["enabled"],
+                frequency=Config.ServiceMode.Frequency(data["service_mode"]["frequency"].lower()),
+                num_hours=data["service_mode"]["num_hours"],
+                _time_of_day=data["service_mode"][
+                    "time_of_day"
+                ],  # _ because the datetime str is parsed  + formatted lazily
+                day_of_week=Config.ServiceMode.Day(data["service_mode"]["day_of_week"].lower()),
+            ).test_for_config(),
         )
 
-    except KeyError as e:
+    except (KeyError, ValueError) as e:
         raise Config.InvalidConfig from e
 
 
@@ -371,17 +496,36 @@ class BackupRunner:
             if LIVE:
                 self.logger.info("Pruning old backup files...")
                 refresh_current_backups_from_rclone(config)
-                run(
-                    "python",
-                    f"{parent_path()}/get_backups_to_prune.py",
-                    f"--input-file={parent_path()}/current_backups.txt",
-                    f"--output-file={PRUNE_FILE}",
-                    f"--file-format={prefix}{config.file_format.datetime}.zip",
-                    f"--keep-daily={config.pruning.keep_daily}",
-                    f"--keep-weekly={config.pruning.keep_weekly}",
-                    f"--keep-monthly={config.pruning.keep_monthly}",
-                    f"--keep-yearly={config.pruning.keep_yearly}",
+                # run(
+                #     "python",
+                #     f"{parent_path()}/get_backups_to_prune.py",
+                #     f"--input-file={parent_path()}/current_backups.txt",
+                #     f"--output-file={PRUNE_FILE}",
+                #     f"--file-format={prefix}{config.file_format.datetime}.zip",
+                #     f"--keep-daily={config.pruning.keep_daily}",
+                #     f"--keep-weekly={config.pruning.keep_weekly}",
+                #     f"--keep-monthly={config.pruning.keep_monthly}",
+                #     f"--keep-yearly={config.pruning.keep_yearly}",
+                #     capture_output=False,
+                # )
+
+                # Find backups to prune
+                with open(f"{parent_path()}/current_backups.txt", "r") as f:
+                    filenames = [line.strip() for line in f if line.strip()]
+                to_prune = should_prune(
+                    filenames=filenames,
+                    file_format=f"{prefix}{config.file_format.datetime}.zip",
+                    keep_daily=config.pruning.keep_daily,
+                    keep_weekly=config.pruning.keep_weekly,
+                    keep_monthly=config.pruning.keep_monthly,
+                    keep_yearly=config.pruning.keep_yearly,
                 )
+                with open(PRUNE_FILE, "w") as f:
+                    for fn in to_prune:
+                        f.write(fn + "\n")
+                self.logger.debug(f"Prune list written to {PRUNE_FILE}. {len(to_prune)} files to prune.")
+
+                # Prune backups
                 with open(PRUNE_FILE, "r") as prune_file:
                     for backup_filename in prune_file.readlines():
                         backup_filename = backup_filename.replace("\n", "")
@@ -409,7 +553,39 @@ if __name__ == "__main__":
 
     config = load_configuration()
     runner = BackupRunner(config)
-    try:
-        runner.run()
-    except Exception as e:
-        runner.logger.error("Backup failed.", exc_info=e)
+    runner.logger.info(config.service_mode)
+
+    if config.service_mode.enabled == True:
+        # Run periodically
+        last_ran_at = datetime.now().astimezone() - timedelta(weeks=(52 * 20))  # 20 years back.. arbitrary
+        last_hourly_reminder = last_ran_at
+        hourly_reminder = Config.ServiceMode(
+            # bootstrap service mode object here for an hourly reminder of the time left...
+            enabled=True,
+            frequency=Config.ServiceMode.Frequency.HOURLY,
+            num_hours=1,
+            _time_of_day="",
+            day_of_week=Config.ServiceMode.Day.MONDAY,
+        )
+        while True:
+            next_run_in = config.service_mode.next_run_in(last_ran_at)
+            time_until_hourly_reminder = hourly_reminder.next_run_in(last_hourly_reminder)
+            if next_run_in < 0:
+                try:
+                    runner.run()
+                    last_ran_at = datetime.now().astimezone()
+                    next_run_in = config.service_mode.next_run_in(last_ran_at)
+                    runner.logger.info(f"Going to sleep...")
+                except Exception as e:
+                    runner.logger.error("Backup failed.", exc_info=e)
+            if time_until_hourly_reminder < 0:
+                # Every hour log how much longer we need to wait before backing up again.
+                last_hourly_reminder = datetime.now().astimezone()
+                runner.logger.info(f"System check. Next run in {format_seconds(int(next_run_in))}...")
+            time.sleep(30)  # check against service mode schedule around every 30 seconds
+    else:
+        # Run once...
+        try:
+            runner.run()
+        except Exception as e:
+            runner.logger.error("Backup failed.", exc_info=e)
