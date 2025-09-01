@@ -332,6 +332,8 @@ class BackupRunner:
 
         self.logger.info(f"Copying backup directories {config.dirs}...")
         for dirname in config.dirs:
+            self.logger.debug(f"Copying {dirname}...")
+            run("mkdir", "-p", f"{BACKUP_WORKSPACE}/{dirname}")
             run("cp", "-r", f"{os.getcwd()}/{dirname}", f"{BACKUP_WORKSPACE}/{dirname}", capture_output=False)
 
         prefix = config.file_format.prefix
