@@ -123,7 +123,7 @@ def should_prune(
     """
 
     # Parse timestamps
-    files_with_ts = [(fn, datetime.strptime(fn, file_format)) for fn in filenames]
+    files_with_ts = [(fn, datetime.strptime(fn, file_format).astimezone()) for fn in filenames]
     files_with_ts = [(fn, ts) for fn, ts in files_with_ts if ts]
 
     # Sort newest -> oldest

@@ -433,7 +433,6 @@ class BackupRunner:
 
         # Check for basic linux dependencies and load the config file
         self._check_dependencies(BASIC_CLI_TOOLS)
-
         # Check if the user needs to install any Postgres specific cli tools
         if any([db.provider == Config.Database.Provider.POSTGRES for db in config.databases]):
             self._check_dependencies(PG_CLI_TOOLS)
