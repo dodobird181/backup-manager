@@ -8,7 +8,7 @@ Currently, only [PostgreSQL](https://www.postgresql.org/) and [SQLite](https://s
 
 ## Installation:
 1. Clone this repository to a new folder on your machine. You can name the folder whatever you want, but I usually choose something like "backups" or "backup_manager".
-2. Run `apt install python3 python-is-python3 zip && python --version` to install Python3 and zip.
+2. Run `apt install python3 python-is-python3 zip pv && python --version` to install Python3, zip, and pv (progress viewer).
 3. Install [yq](https://github.com/mikefarah/yq?tab=readme-ov-file#install) by following their README.
 4. Copy `config.yaml.template` and rename the copy to `config.yaml`.
 4. Run `./[your_folder_name]/run.py` to do a dry-run of a backup. You should see an output similar to:

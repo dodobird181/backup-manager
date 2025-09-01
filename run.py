@@ -278,7 +278,7 @@ class BackupRunner:
 
     def run(self) -> None:
         LIVE = bool(get_arguments().live)
-        BASIC_CLI_TOOLS = ["rclone", "zip", "yq"]
+        BASIC_CLI_TOOLS = ["rclone", "zip", "yq", "pv"]
         PG_CLI_TOOLS = ["pg_dump", "psql"]
         ZIP_DIR = f"{uuid4().hex}_tmp_backup_manager_workspace"
 
