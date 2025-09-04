@@ -2,7 +2,7 @@
 
 A simple program for backing up files and databases written by Samuel Morris using Python and [Rclone](https://rclone.org/).
 
-The motivation behind this project was to create an easy way to configure *what* to back up, *where* the data should be sent, and *how long* it should persist there. All you need to do to create a new backup "system" is [configure an rclone remote](https://rclone.org/docs/#configure), specify the directories and databases to back up in `config.yaml`, and schedule a cron job that periodically runs this program.
+The motivation behind this project was to create an easy way to configure *what* to back up, *where* the data should be sent, and *how long* it should persist there. All you need to do to create a new backup "system" is [configure an rclone remote](https://rclone.org/docs/#configure), specify which directories and databases to back up in `config.yaml`, and either run the program periodically or as a service by setting `service_mode.enabled=true` in the config.
 
 Currently, only [PostgreSQL](https://www.postgresql.org/) and [SQLite](https://sqlite.org/) databses are supported.
 
