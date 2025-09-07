@@ -34,3 +34,4 @@ Currently, only [PostgreSQL](https://www.postgresql.org/) and [SQLite](https://s
 ### TODOs:
 - [ ] Fix WEEKLY Backup config parsing failure when same weekday as current day.
 - [ ] Make config file actually do env var substitution.
+- [ ] Support absolute paths as primary method for finding directories to backup, and fallback to using relative path.
