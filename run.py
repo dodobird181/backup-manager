@@ -231,10 +231,10 @@ class Config:
             return self.time_of_day_dt().strftime("%H:%M %Z%z")
 
         def _next_weekday_in(self) -> int:
-            """How many days until the next sceduled weekday. If we are scheduled for today then return 7."""
+            """How many days until the next scheduled weekday. If we are scheduled for today then return 7."""
             now = datetime.now().astimezone()
             dt = now
-            for i in range(1, 7):
+            for i in range(1, 8):
                 dt += timedelta(days=1)
                 weekday = self.Day(dt.strftime("%A").lower())
                 if weekday == self.day_of_week:
