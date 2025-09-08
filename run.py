@@ -22,7 +22,7 @@ from get_backups_to_prune import should_prune
 
 Arguments = namedtuple(
     "ArgNamespace",
-    ["live", "log_level", "disable_pruning"],
+    ["live", "log_level", "disable_pruning", "ignore_missing_dirs"],
 )
 
 
@@ -47,7 +47,14 @@ def get_arguments() -> Arguments:
         type=str,
         help="The console log level. One of: [DEBUG, INFO, WARNING, ERROR]. ",
     )
+    parser.add_argument(
+        "-i",
+        default=False,
+        action="store_true",
+        help="Ignore missing dirs and proceed with the backup without prompting. This flag is ignored when service mode is enabled.",
+    )
     args = parser.parse_args()
+    setattr(args, "ignore_missing_dirs", args.i)
     return args  # type: ignore
 
 
@@ -90,7 +97,7 @@ def format_seconds(seconds: int) -> str:
 
 def wait_for_confirm(message: str) -> bool:
     while True:
-        response = input(f"{now_str()} - {message} (y/n)?")
+        response = input(f"{now_str()} {message} (y/n)?")
         if response.lower().strip() == "y":
             return True
         elif response.lower().strip() == "n":
@@ -364,6 +371,30 @@ def refresh_current_backups_from_rclone(config: Config):
 
 class BackupRunner:
 
+    class DirNotFound(Exception):
+        """
+        The backup directory was not found.
+        """
+
+        def __init__(self, dirname: str):
+            self.dirname = dirname
+            super().__init__(
+                "The directory '{}' was not found. Paths checked: [{}, {}]".format(
+                    dirname,
+                    dirname,
+                    f"{os.getcwd()}/{dirname}",
+                )
+            )
+
+    class SkipDir(Exception):
+        """
+        The backup directory was not found and will be skipped.
+        """
+
+        def __init__(self, dirname: str):
+            self.dirname = dirname
+            super().__init__(f"Skipping the directory: {dirname}.")
+
     def __init__(self, config: Config):
         self.config = config
         self.logger = self._logger_from_config(config)
@@ -401,6 +432,24 @@ class BackupRunner:
                 self.logger.error(f"Backup failed. Please install and configure: '{toolname}'.")
                 exit(1)
 
+    def _parse_dirname(self, dirname: str) -> str:
+        """
+        Make sure the directory name exists on the machine. This method tries
+        the following in order: 1.) absolute path, and 2.) relative path from the
+        parent directory to where `run.py` is located, i.e., the current working
+        directory when running the script. Will raise an exception if the directory
+        doesn't exist and otherwise return the guaranteed path to the directory.
+        """
+        if os.path.exists(dirname):
+            return dirname
+        elif os.path.exists(f"{os.getcwd()}/{dirname}"):
+            return f"{os.getcwd()}/{dirname}"
+        elif get_arguments().ignore_missing_dirs == True or self.config.service_mode.enabled == True:
+            # Ignore missing directories if "-i" flag passed or we are running in service mode (since a daemon
+            # shouldn't prompt the CLI for input to make a decision.)
+            raise self.SkipDir(dirname)
+        raise self.DirNotFound(dirname)
+
     def run(self) -> None:
         LIVE = bool(get_arguments().live)
         BASIC_CLI_TOOLS = ["rclone", "zip", "yq", "pv"]
@@ -425,11 +474,17 @@ class BackupRunner:
 
         # warn if directory to backup is missing
         for dirname in self.config.dirs:
-            if not dir_exists(dirname):
-                backup = wait_for_confirm(f"WARNING: Could not find directory '{dirname}'. Do you wish to proceed")
+            try:
+                parsed_dirname = self._parse_dirname(dirname)
+            except self.DirNotFound:
+                backup = wait_for_confirm(
+                    f"[WARNING]: Could not find directory '{dirname}'. Do you wish to proceed"
+                )
                 if backup == False:
                     self.logger.info("Backup cancelled.")
                     exit(0)
+            except self.SkipDir:
+                continue
 
         # Check for basic linux dependencies and load the config file
         self._check_dependencies(BASIC_CLI_TOOLS)
@@ -456,9 +511,13 @@ class BackupRunner:
 
         self.logger.info(f"Copying backup directories {config.dirs}...")
         for dirname in config.dirs:
-            self.logger.debug(f"Copying {dirname}...")
-            run("mkdir", "-p", f"{BACKUP_WORKSPACE}/{dirname}")
-            run("cp", "-r", f"{os.getcwd()}/{dirname}", f"{BACKUP_WORKSPACE}/{dirname}", capture_output=False)
+            try:
+                parsed_dirname = self._parse_dirname(dirname)
+                self.logger.debug(f"Copying {dirname}...")
+                run("mkdir", "-p", f"{BACKUP_WORKSPACE}/{dirname}")
+                run("cp", "-r", parsed_dirname, f"{BACKUP_WORKSPACE}/{dirname}", capture_output=False)
+            except (self.SkipDir, self.DirNotFound):
+                self.logger.warning(f"Skipping dir '{dirname}' because it was not found.")
 
         prefix = config.file_format.prefix
         prefix = "" if prefix.strip() == "" else f"{prefix}_"
