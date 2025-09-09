@@ -35,4 +35,4 @@ Currently, only [PostgreSQL](https://www.postgresql.org/) and [SQLite](https://s
 - [x] Fix WEEKLY Backup config parsing failure when same weekday as current day.
 - [x] Add "-i" flag for ignoring missing backup directories (should do nothing if in service mode, since service mode is expected to run regardless. Service mode should just output a warning).
 - [ ] Make config file actually do env var substitution.
-- [ ] Support absolute paths as primary method for finding directories to backup, and fallback to using relative path.
+- [x] Support absolute paths as primary method for finding directories to backup, and fallback to using relative path.
