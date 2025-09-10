@@ -6,6 +6,7 @@ import argparse
 import json
 import logging
 import os
+import re
 import subprocess
 import sys
 import time
@@ -15,7 +16,7 @@ from datetime import datetime, timedelta
 from enum import Enum
 from functools import lru_cache
 from logging.handlers import TimedRotatingFileHandler
-from typing import List
+from typing import Any, Callable, Dict, List
 from uuid import uuid4
 
 from get_backups_to_prune import should_prune
@@ -75,10 +76,6 @@ def config_path() -> str:
     return f"{parent_dir()}/config.yaml"
 
 
-def dir_exists(dirname: str) -> bool:
-    return os.path.exists(f"{os.getcwd()}/{dirname}")
-
-
 def now_str() -> str:
     return datetime.now().astimezone().strftime("%Y-%m-%d %I:%M:%S %p %Z%z")
 
@@ -111,19 +108,66 @@ def run(*args, check=True, capture_output=True, text=True, **kwargs) -> subproce
     return subprocess.run(args, text=text, check=check, capture_output=capture_output, **kwargs)
 
 
+class BaseConfig:
+    """
+    Base config handles environment variable substution automatically for any string-typed attributes.
+    """
+
+    class InvalidConfig(Exception):
+        """
+        The config contains some invalid formatting or data.
+        """
+
+        ...
+
+    class MissingEnvVar(InvalidConfig):
+        """
+        An environment variable required for the config is missing.
+        """
+
+        def __init__(self, varname: str):
+            super().__init__(
+                f"One or more variable(s) in the string '{varname}' is missing from the environment but required in 'config.yaml'."
+            )
+
+    def _expand_env_var(self, path: str) -> str:
+        """
+        Expand environment variables in the path and raise `MissingEnvVar` if any
+        variable is missing from the environment.
+        """
+        if not bool(re.search(r"\$\{[^}]+\}", path)):
+            # no varnames are in the path
+            return path
+        expanded = os.path.expandvars(path)
+        if expanded == path:
+            # expansion didn't happen but there is an env var pattern. This means the var is not set.
+            raise self.MissingEnvVar(path)
+        return expanded
+
+    def __setattr__(self, key: str, value: Any) -> None:
+        """
+        Attempt to inject environment variables defined by the syntax '${VAR_NAME}'
+        when string attributes are set.
+        """
+        if isinstance(value, str):
+            expanded = self._expand_env_var(value)
+            super().__setattr__(key, expanded)
+        elif isinstance(value, List):
+            expanded = [self._expand_env_var(x) if isinstance(x, str) else x for x in value]
+            super().__setattr__(key, expanded)
+        else:
+            # normal setattr for all other datatypes
+            super().__setattr__(key, value)
+
+
 @dataclass
-class Config:
+class Config(BaseConfig):
     """
     Python representation of the config file.
     """
 
-    class InvalidConfig(Exception):
-        """The config contains some invalid formatting or data."""
-
-        ...
-
     @dataclass
-    class Database:
+    class Database(BaseConfig):
 
         class UnsupportedProvider(Exception):
             def __init__(self, provider):
@@ -188,19 +232,19 @@ class Config:
             raise Config.Database.UnsupportedProvider(self.provider)
 
     @dataclass
-    class FileFormat:
+    class FileFormat(BaseConfig):
         prefix: str
         datetime: str
 
     @dataclass
-    class PruningStrategy:
+    class PruningStrategy(BaseConfig):
         keep_daily: int
         keep_weekly: int
         keep_monthly: int
         keep_yearly: int
 
     @dataclass
-    class ServiceMode:
+    class ServiceMode(BaseConfig):
 
         class Frequency(Enum):
             HOURLY = "hourly"
@@ -495,7 +539,7 @@ class BackupRunner:
         # Check database connections exist
         for db in config.databases:
             if db.test_conn() == False:
-                self.logger.info(f"Backup failed. Could not connect to database: {db}.")
+                self.logger.error(f"Backup failed. Could not connect to database: {db}.")
                 exit(1)
 
         # Backup the databases
