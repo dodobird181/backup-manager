@@ -16,8 +16,10 @@ from datetime import datetime, timedelta
 from enum import Enum
 from functools import lru_cache
 from logging.handlers import TimedRotatingFileHandler
-from typing import Any, Callable, Dict, List
+from typing import Any, List
 from uuid import uuid4
+
+import systemd.daemon
 
 from get_backups_to_prune import should_prune
 
@@ -645,6 +647,7 @@ if __name__ == "__main__":
     runner.logger.info(config.service_mode)
 
     if config.service_mode.enabled == True:
+        systemd.daemon.notify("READY=1")  # daemon is ready after config is loaded
         # Run periodically
         last_ran_at = datetime.now().astimezone() - timedelta(weeks=(52 * 20))  # 20 years back.. arbitrary
         last_hourly_reminder = last_ran_at
