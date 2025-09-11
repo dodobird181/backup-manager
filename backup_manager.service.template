@@ -1,0 +1,29 @@
+# Example systemd unit / service file for running the backup-manager in "service mode".
+# This template is based off of the one from: https://github.com/torfsen/python-systemd-tutorial/tree/master.
+
+
+[Unit]
+Description=Python Rclone Backup Manager
+
+
+[Service]
+ExecStart=PATH_TO_PYTHON PATH_TO_BACKUP_MANAGER_run.py
+
+# Disable Python's buffering of STDOUT and STDERR, so that output from the
+# service shows up immediately in systemd's logs
+Environment=PYTHONUNBUFFERED=1
+
+# Automatically restart the service if it crashes
+Restart=on-failure
+
+# Our service will notify systemd once it is up and running
+Type=notify
+
+# Use a dedicated user to run our service
+User=YOUR_USER_HERE
+
+
+[Install]
+# Tell systemd to automatically start this service when the system boots
+# (assuming the service is enabled)
+WantedBy=default.target
