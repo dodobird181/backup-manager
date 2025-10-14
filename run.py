@@ -650,30 +650,16 @@ if __name__ == "__main__":
         systemd.daemon.notify("READY=1")  # daemon is ready after config is loaded
         # Run periodically
         last_ran_at = datetime.now().astimezone() - timedelta(weeks=(52 * 20))  # 20 years back.. arbitrary
-        last_hourly_reminder = last_ran_at
-        hourly_reminder = Config.ServiceMode(
-            # bootstrap service mode object here for an hourly reminder of the time left...
-            enabled=True,
-            frequency=Config.ServiceMode.Frequency.HOURLY,
-            num_hours=1,
-            _time_of_day="",
-            day_of_week=Config.ServiceMode.Day.MONDAY,
-        )
         while True:
             next_run_in = config.service_mode.next_run_in(last_ran_at)
-            time_until_hourly_reminder = hourly_reminder.next_run_in(last_hourly_reminder)
             if next_run_in < 0:
                 try:
                     runner.run()
                     last_ran_at = datetime.now().astimezone()
                     next_run_in = config.service_mode.next_run_in(last_ran_at)
-                    runner.logger.info(f"Going to sleep...")
+                    runner.logger.info(f"Next run in {format_seconds(int(next_run_in))}. Going to sleep...")
                 except Exception as e:
                     runner.logger.error("Backup failed.", exc_info=e)
-            if time_until_hourly_reminder < 0:
-                # Every hour log how much longer we need to wait before backing up again.
-                last_hourly_reminder = datetime.now().astimezone()
-                runner.logger.info(f"System check. Next run in {format_seconds(int(next_run_in))}...")
             time.sleep(30)  # check against service mode schedule around every 30 seconds
     else:
         # Run once...
