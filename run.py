@@ -297,40 +297,39 @@ class Config(BaseConfig):
         def next_run_in(self, last_ran_at: datetime) -> float:
             """How many seconds from now the next scheduled backup will run."""
             now = datetime.now().astimezone()
-            match self.frequency:
-                case self.Frequency.HOURLY:
-                    return (last_ran_at + timedelta(hours=int(self.num_hours))).timestamp() - now.timestamp()
-                case self.Frequency.DAILY:
+            if self.Frequency.HOURLY == self.frequency:
+                return (last_ran_at + timedelta(hours=int(self.num_hours))).timestamp() - now.timestamp()
+            elif self.Frequency.DAILY == self.frequency:
+                today_run_time = self.time_of_day_dt().replace(year=now.year, month=now.month, day=now.day)
+                tomorrow_run_time = self.time_of_day_dt().replace(
+                    year=now.year, month=now.month, day=now.day
+                ) + timedelta(days=1)
+                if last_ran_at.date() < now.date():
+                    # if we last ran on a day before today, return the difference between now and the time of day we're scheduled to run.
+                    return today_run_time.timestamp() - now.timestamp()
+                else:
+                    # We have already ran today, so return the difference between then now and the time of day we're scheduled to run tomorrow.
+                    return tomorrow_run_time.timestamp() - now.timestamp()
+            elif self.Frequency.WEEKLY == self.frequency:
+                current_weekday = self.Day(now.strftime("%A").lower())
+                if last_ran_at + timedelta(days=7) < now and current_weekday == self.day_of_week:
+                    # It's been at least 7 days since the last run, and we are on the correct day of the week, so we *should* be running today.
+                    # Therefore, return the today run time diff.
                     today_run_time = self.time_of_day_dt().replace(year=now.year, month=now.month, day=now.day)
-                    tomorrow_run_time = self.time_of_day_dt().replace(
-                        year=now.year, month=now.month, day=now.day
-                    ) + timedelta(days=1)
-                    if last_ran_at.date() < now.date():
-                        # if we last ran on a day before today, return the difference between now and the time of day we're scheduled to run.
-                        return today_run_time.timestamp() - now.timestamp()
-                    else:
-                        # We have already ran today, so return the difference between then now and the time of day we're scheduled to run tomorrow.
-                        return tomorrow_run_time.timestamp() - now.timestamp()
-                case self.Frequency.WEEKLY:
-                    current_weekday = self.Day(now.strftime("%A").lower())
-                    if last_ran_at + timedelta(days=7) < now and current_weekday == self.day_of_week:
-                        # It's been at least 7 days since the last run, and we are on the correct day of the week, so we *should* be running today.
-                        # Therefore, return the today run time diff.
-                        today_run_time = self.time_of_day_dt().replace(year=now.year, month=now.month, day=now.day)
-                        return today_run_time.timestamp() - now.timestamp()
-                    else:
+                    return today_run_time.timestamp() - now.timestamp()
+                else:
 
-                        # It's been LESS than 7 days since the last run. Therefore, we should return the diff from 7 days after the last run date at the daily run time.
-                        run_time = self.time_of_day_dt()
-                        future_run_date = last_ran_at + timedelta(days=self._next_weekday_in())
-                        future_run_dt = future_run_date.replace(
-                            hour=run_time.hour,
-                            minute=run_time.minute,
-                        )
-                        return future_run_dt.timestamp() - now.timestamp()
+                    # It's been LESS than 7 days since the last run. Therefore, we should return the diff from 7 days after the last run date at the daily run time.
+                    run_time = self.time_of_day_dt()
+                    future_run_date = last_ran_at + timedelta(days=self._next_weekday_in())
+                    future_run_dt = future_run_date.replace(
+                        hour=run_time.hour,
+                        minute=run_time.minute,
+                    )
+                    return future_run_dt.timestamp() - now.timestamp()
 
-                case _:
-                    raise Config.InvalidConfig(f"Unsupported service mode frequency: {self.frequency}.")
+            else:
+                raise Config.InvalidConfig(f"Unsupported service mode frequency: {self.frequency}.")
 
         def __str__(self) -> str:
             if self.enabled == False:
