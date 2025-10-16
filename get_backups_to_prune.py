@@ -55,17 +55,16 @@ class Bucket:
         YEAR = "year"
 
         def in_days(self) -> int:
-            match self.name:
-                case "DAY":
-                    return 1
-                case "WEEK":
-                    return 7
-                case "MONTH":
-                    return 30
-                case "YEAR":
-                    return 365
-                case _:
-                    raise ValueError(f"Unknown bucket size: {self.name}.")
+            days_map = {
+                "day": 1,
+                "week": 7,
+                "month": 30,
+                "year": 365,
+            }
+            try:
+                return days_map[self.value]
+            except KeyError:
+                raise ValueError(f"Unknown bucket size: {self.value}.")
 
     def __init__(self, size: Size, start: datetime):
         self.size = size
